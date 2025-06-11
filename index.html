@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Frustration to Tasks</title>
+		<link rel="stylesheet" href="styles.css" />
+	</head>
+	<body>
+		<div class="app-container">
+			<!-- Mode Toggle -->
+			<div class="mode-toggle">
+				<button id="vent-mode-btn" class="mode-btn active">Vent Mode</button>
+				<button id="action-mode-btn" class="mode-btn">Action Mode</button>
+			</div>
+
+			<!-- Vent Mode Interface -->
+			<div id="vent-mode" class="mode-interface active">
+				<div class="mode-header">
+					<h1>What's frustrating you?</h1>
+					<p>Write freely about what's bothering you. No structure needed.</p>
+				</div>
+
+				<div class="input-section">
+					<textarea
+						id="frustration-input"
+						placeholder="Just start typing... What's bothering you? What feels overwhelming? What's not working the way you want it to?"
+						rows="8"
+					></textarea>
+
+					<div class="input-actions">
+						<button id="process-btn" class="primary-btn">
+							Convert to Tasks
+						</button>
+						<button id="clear-btn" class="secondary-btn">Clear</button>
+					</div>
+				</div>
+
+				<div class="recent-entries">
+					<h3>Recent Entries</h3>
+					<div id="recent-vents-list"></div>
+				</div>
+			</div>
+
+			<!-- Action Mode Interface -->
+			<div id="action-mode" class="mode-interface">
+				<div class="mode-header">
+					<h1>Your Tasks</h1>
+					<p>Tasks generated from your frustrations, ready to tackle.</p>
+				</div>
+
+				<div class="stats-section">
+					<div class="stat-card">
+						<span class="stat-number" id="total-tasks">0</span>
+						<span class="stat-label">Total</span>
+					</div>
+					<div class="stat-card">
+						<span class="stat-number" id="completed-tasks">0</span>
+						<span class="stat-label">Done</span>
+					</div>
+					<div class="stat-card">
+						<span class="stat-number" id="completion-rate">0%</span>
+						<span class="stat-label">Progress</span>
+					</div>
+				</div>
+
+				<div class="task-filters">
+					<button class="filter-btn active" data-filter="all">All</button>
+					<button class="filter-btn" data-filter="pending">Pending</button>
+					<button class="filter-btn" data-filter="completed">Completed</button>
+				</div>
+
+				<div class="tasks-section">
+					<div id="tasks-list"></div>
+					<div id="no-tasks-placeholder" class="placeholder">
+						<p>No tasks yet. Switch to Vent Mode to get started.</p>
+					</div>
+				</div>
+
+				<div class="action-buttons">
+					<button id="clear-completed-btn" class="secondary-btn">
+						Clear Completed
+					</button>
+					<button id="export-tasks-btn" class="secondary-btn">
+						Export Tasks
+					</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- Processing Modal -->
+		<div id="processing-modal" class="modal">
+			<div class="modal-content">
+				<div class="processing-animation">
+					<div class="spinner"></div>
+					<p>Analyzing your frustrations...</p>
+					<p class="processing-step">Identifying key issues</p>
+				</div>
+			</div>
+		</div>
+
+		<script src="script.js"></script>
+	</body>
+</html>
