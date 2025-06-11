@@ -1,10 +1,10 @@
-const CACHE_NAME = 'frustration-to-tasks-v1';
+const CACHE_NAME = 'frustration-to-tasks-v3';
 const urlsToCache = [
-	'./',
-	'./index.html',
-	'./styles.css',
-	'./script.js',
-	'./manifest.json',
+	'/dothing/',
+	'/dothing/index.html',
+	'/dothing/styles.css',
+	'/dothing/script.js',
+	'/dothing/manifest.json',
 ];
 
 // Install event - cache resources
