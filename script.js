@@ -4,6 +4,9 @@ function FrustrationToTasksApp() {
 	this.tasks = this.loadFromStorage('tasks') || [];
 	this.recentVents = this.loadFromStorage('recentVents') || [];
 	this.currentFilter = 'all';
+	this.apiKey = this.loadFromStorage('apiKey') || '';
+	this.llmProvider = this.loadFromStorage('llmProvider') || 'openai';
+	this.customPrompt = this.loadFromStorage('customPrompt') || '';
 
 	this.init();
 }
@@ -12,6 +15,13 @@ FrustrationToTasksApp.prototype.init = function () {
 	this.bindEvents();
 	this.updateUI();
 	this.showRecentVents();
+	this.checkRecurringTasks();
+
+	// Check for overdue recurring tasks every 5 minutes
+	var self = this;
+	setInterval(function () {
+		self.checkRecurringTasks();
+	}, 5 * 60 * 1000);
 };
 
 FrustrationToTasksApp.prototype.bindEvents = function () {
@@ -24,9 +34,14 @@ FrustrationToTasksApp.prototype.bindEvents = function () {
 			self.switchMode('vent');
 		});
 	document
-		.getElementById('action-mode-btn')
+		.getElementById('task-mode-btn')
 		.addEventListener('click', function () {
-			self.switchMode('action');
+			self.switchMode('task');
+		});
+	document
+		.getElementById('progress-mode-btn')
+		.addEventListener('click', function () {
+			self.switchMode('progress');
 		});
 
 	// Vent mode actions
@@ -47,6 +62,33 @@ FrustrationToTasksApp.prototype.bindEvents = function () {
 		.getElementById('export-tasks-btn')
 		.addEventListener('click', function () {
 			self.exportTasks();
+		});
+
+	// Settings modal
+	document
+		.getElementById('settings-btn')
+		.addEventListener('click', function () {
+			self.showSettingsModal();
+		});
+	document
+		.getElementById('save-settings-btn')
+		.addEventListener('click', function () {
+			self.saveSettings();
+		});
+	document
+		.getElementById('close-settings-btn')
+		.addEventListener('click', function () {
+			self.hideSettingsModal();
+		});
+	document
+		.getElementById('reset-prompt-btn')
+		.addEventListener('click', function () {
+			self.resetPrompt();
+		});
+	document
+		.getElementById('load-example-btn')
+		.addEventListener('click', function () {
+			self.loadExamplePrompt();
 		});
 
 	// Task filters
@@ -91,215 +133,207 @@ FrustrationToTasksApp.prototype.switchMode = function (mode) {
 	}
 	document.getElementById(mode + '-mode').classList.add('active');
 
-	if (mode === 'action') {
+	if (mode === 'task') {
 		this.updateTasksDisplay();
+	} else if (mode === 'progress') {
 		this.updateStats();
+		this.updatePriorityBreakdown();
+		this.updateRecentCompletions();
 	}
 };
 
 FrustrationToTasksApp.prototype.processFrustration = function () {
 	var self = this;
 	var input = document.getElementById('frustration-input').value.trim();
-	if (!input) return;
+
+	// Check if API key is configured
+	if (!this.apiKey) {
+		this.showNotification('Please configure your API key in settings first!');
+		this.showSettingsModal();
+		return;
+	}
 
 	// Show processing modal
 	this.showProcessingModal();
 
-	// Save to recent vents
-	var ventEntry = {
-		id: Date.now(),
-		text: input,
-		date: new Date().toISOString(),
-		processed: false,
-	};
+	// Save current input to recent vents if it exists
+	if (input) {
+		var ventEntry = {
+			id: Date.now(),
+			text: input,
+			date: new Date().toISOString(),
+			processed: false,
+		};
 
-	this.recentVents.unshift(ventEntry);
-	if (this.recentVents.length > 10) {
-		this.recentVents = this.recentVents.slice(0, 10);
+		this.recentVents.unshift(ventEntry);
+		if (this.recentVents.length > 10) {
+			this.recentVents = this.recentVents.slice(0, 10);
+		}
 	}
 
-	// Simulate AI processing delay
-	setTimeout(function () {
-		// Process the frustration into tasks
-		var newTasks = self.extractTasksFromFrustration(input);
+	// Collect all vents text
+	var allVentsText = [];
+	if (input) {
+		allVentsText.push(input);
+	}
 
-		// Add tasks to the list
-		for (var i = 0; i < newTasks.length; i++) {
-			var task = newTasks[i];
-			task.id = Date.now() + Math.random();
-			task.createdAt = new Date().toISOString();
-			task.completed = false;
-			task.sourceVent = ventEntry.id;
-			self.tasks.push(task);
+	// Add recent vents (up to 5 most recent)
+	var recentVentsToProcess = this.recentVents.slice(0, 5);
+	for (var i = 0; i < recentVentsToProcess.length; i++) {
+		var vent = recentVentsToProcess[i];
+		// Avoid duplicating the current input
+		if (vent.text !== input) {
+			allVentsText.push(vent.text);
 		}
+	}
 
-		ventEntry.processed = true;
+	if (allVentsText.length === 0) {
+		this.hideProcessingModal();
+		this.showNotification('Please enter some frustrations to process');
+		return;
+	}
 
-		// Save to storage
-		self.saveToStorage('tasks', self.tasks);
-		self.saveToStorage('recentVents', self.recentVents);
+	// Process all frustrations together using LLM
+	this.extractTasksFromAllFrustrations(allVentsText)
+		.then(function (newTasks) {
+			// Replace entire task list with new comprehensive list
+			self.tasks = [];
+			for (var i = 0; i < newTasks.length; i++) {
+				var task = newTasks[i];
+				task.id = Date.now() + Math.random() + i;
+				task.createdAt = new Date().toISOString();
+				task.completed = false;
+				self.tasks.push(task);
+			}
 
-		// Hide processing modal
-		self.hideProcessingModal();
+			// Mark all processed vents as processed
+			for (var j = 0; j < self.recentVents.length; j++) {
+				self.recentVents[j].processed = true;
+			}
 
-		// Clear input and switch to action mode
-		document.getElementById('frustration-input').value = '';
-		self.saveToStorage('currentInput', '');
-		self.switchMode('action');
+			// Save to storage
+			self.saveToStorage('tasks', self.tasks);
+			self.saveToStorage('recentVents', self.recentVents);
 
-		// Show success feedback
-		self.showNotification(
-			'Generated ' + newTasks.length + ' actionable tasks!'
-		);
+			// Hide processing modal
+			self.hideProcessingModal();
 
-		self.showRecentVents();
-	}, 2000);
+			// Clear input and switch to task mode
+			document.getElementById('frustration-input').value = '';
+			self.saveToStorage('currentInput', '');
+			self.switchMode('task');
+
+			// Show success feedback
+			self.showNotification(
+				'Generated ' +
+					newTasks.length +
+					' actionable tasks from ' +
+					allVentsText.length +
+					' frustrations!'
+			);
+
+			self.showRecentVents();
+		})
+		.catch(function (error) {
+			console.error('Error processing frustrations:', error);
+			self.hideProcessingModal();
+			self.showNotification('Error processing frustrations: ' + error.message);
+		});
 };
 
-FrustrationToTasksApp.prototype.extractTasksFromFrustration = function (text) {
-	var tasks = [];
-	var sentences = text.split(/[.!?]+/).filter(function (s) {
-		return s.trim().length > 10;
+FrustrationToTasksApp.prototype.extractTasksFromAllFrustrations = function (
+	allVentsText
+) {
+	var self = this;
+
+	var defaultPrompt = `You are a helpful assistant that converts people's frustrations and complaints into actionable tasks. 
+
+Please analyze the following collection of frustrations/vents and convert them into a comprehensive set of specific, actionable tasks that could help address the underlying issues across ALL the frustrations.
+
+Look for patterns, common themes, and root causes across all the frustrations. Create tasks that address the root causes, but focus more on things that are immediately doable, not things that require too much planning or organization.
+
+For each task, provide:
+- title: A clear, concise title (don't use initcaps for every word)
+- description: A longer, detailed description that explains what needs to be done, why it's important, and any helpful context, tips, or suggestions. This will be shown in a collapsible panel when the user wants more details.
+- category: One of these categories: Learning, Action, Problem Solving, Goals, Simplification, Organization, Communication, Planning, Research, or General
+- priority: low, medium, or high
+- recurring: Set to "none" for one-time tasks, or "daily", "weekly", or "monthly" for recurring tasks. Use recurring tasks for habits, maintenance, or regular check-ins that would help prevent similar frustrations.
+
+Frustrations:
+{text}`;
+
+	var prompt = this.customPrompt || defaultPrompt;
+	var combinedText = '';
+	for (var i = 0; i < allVentsText.length; i++) {
+		combinedText += i + 1 + '. ' + allVentsText[i] + '\n\n';
+	}
+	prompt = prompt.replace('{text}', combinedText);
+
+	return this.callLLMAPI(prompt).then(function (tasks) {
+		try {
+			// Validate and clean the tasks (tasks is already an array)
+			var validTasks = [];
+			for (var i = 0; i < tasks.length; i++) {
+				var task = tasks[i];
+				if (
+					task.title &&
+					task.description &&
+					task.category &&
+					task.priority &&
+					task.recurring
+				) {
+					var recurringValue = ['none', 'daily', 'weekly', 'monthly'].includes(
+						task.recurring.toLowerCase()
+					)
+						? task.recurring.toLowerCase()
+						: 'none';
+
+					validTasks.push({
+						title: task.title.substring(0, 100),
+						description: task.description.substring(0, 800),
+						category: task.category,
+						priority: ['low', 'medium', 'high'].includes(
+							task.priority.toLowerCase()
+						)
+							? task.priority.toLowerCase()
+							: 'medium',
+						recurring: recurringValue,
+						nextDue:
+							recurringValue !== 'none' ? new Date().toISOString() : null,
+					});
+				}
+			}
+
+			// Ensure we have at least one task
+			if (validTasks.length === 0) {
+				validTasks.push({
+					title: 'Reflect on current situation',
+					description:
+						"Take time to think through the issues mentioned and plan next steps. Consider what's working, what isn't, and what small changes you could make to improve your situation.",
+					category: 'Planning',
+					priority: 'medium',
+					recurring: 'none',
+					nextDue: null,
+				});
+			}
+
+			return validTasks;
+		} catch (error) {
+			console.error('Error processing LLM response:', error);
+			// Fallback to a default task
+			return [
+				{
+					title: 'Address current concerns',
+					description:
+						'Work on the issues mentioned in your recent thoughts. Start with the most pressing issue and take one small action to move forward.',
+					category: 'General',
+					priority: 'medium',
+					recurring: 'none',
+					nextDue: null,
+				},
+			];
+		}
 	});
-
-	var frustrationPatterns = [
-		{
-			regex: /(?:I\s+)?(can't|cannot|unable|don't know how)\s+([^,\.!?]+)/gi,
-			taskTemplate: function (match, inability, action) {
-				return {
-					title: 'Learn how to ' + action.trim(),
-					description: 'Address the inability to ' + action.trim(),
-					category: 'Learning',
-					priority: 'medium',
-				};
-			},
-		},
-		{
-			regex: /(?:I\s+)?(need to|should|have to|must)\s+([^,\.!?]+)/gi,
-			taskTemplate: function (match, modal, action) {
-				return {
-					title: action.trim().charAt(0).toUpperCase() + action.trim().slice(1),
-					description: modal.trim() + ' ' + action.trim(),
-					category: 'Action',
-					priority: modal.includes('must') ? 'high' : 'medium',
-				};
-			},
-		},
-		{
-			regex:
-				/(?:I'm|I am)\s+(frustrated|annoyed|tired|sick)\s+(?:of|with|by)\s+([^,\.!?]+)/gi,
-			taskTemplate: function (match, emotion, source) {
-				return {
-					title: 'Address issues with ' + source.trim(),
-					description: 'Find solutions for frustration with ' + source.trim(),
-					category: 'Problem Solving',
-					priority: 'high',
-				};
-			},
-		},
-		{
-			regex:
-				/(?:there's|there is)\s+(?:a problem|an issue|trouble)\s+(?:with|in)\s+([^,\.!?]+)/gi,
-			taskTemplate: function (match, problem) {
-				return {
-					title: 'Fix problem with ' + problem.trim(),
-					description: 'Investigate and resolve issues with ' + problem.trim(),
-					category: 'Problem Solving',
-					priority: 'high',
-				};
-			},
-		},
-		{
-			regex: /(?:I\s+)?(want|wish|hope)\s+(?:I could|to)\s+([^,\.!?]+)/gi,
-			taskTemplate: function (match, desire, goal) {
-				return {
-					title: 'Work towards ' + goal.trim(),
-					description: 'Take steps to achieve: ' + goal.trim(),
-					category: 'Goals',
-					priority: 'low',
-				};
-			},
-		},
-		{
-			regex:
-				/(?:it's|its)\s+(too hard|difficult|complicated|confusing)\s+(?:to)?\s*([^,\.!?]*)/gi,
-			taskTemplate: function (match, difficulty, task) {
-				return {
-					title: 'Simplify ' + (task.trim() || 'this process'),
-					description: 'Break down complex task into manageable steps',
-					category: 'Simplification',
-					priority: 'medium',
-				};
-			},
-		},
-		{
-			regex:
-				/(?:I\s+)?(keep forgetting|always forget|never remember)\s+(?:to)?\s*([^,\.!?]+)/gi,
-			taskTemplate: function (match, forgetfulness, task) {
-				return {
-					title: 'Set up reminder for ' + task.trim(),
-					description: 'Create system to remember: ' + task.trim(),
-					category: 'Organization',
-					priority: 'medium',
-				};
-			},
-		},
-	];
-
-	// Apply patterns to extract tasks
-	for (var i = 0; i < frustrationPatterns.length; i++) {
-		var pattern = frustrationPatterns[i];
-		var match;
-		while ((match = pattern.regex.exec(text)) !== null) {
-			var task = pattern.taskTemplate.apply(null, match);
-			if (task.title && task.title.length > 5) {
-				tasks.push(task);
-			}
-		}
-	}
-
-	// If no patterns matched, create generic tasks based on key topics
-	if (tasks.length === 0) {
-		var keywords = this.extractKeywords(text);
-		for (var j = 0; j < keywords.length; j++) {
-			var keyword = keywords[j];
-			tasks.push({
-				title: 'Address concerns about ' + keyword,
-				description: 'Take action related to: ' + keyword,
-				category: 'General',
-				priority: 'medium',
-			});
-		}
-	}
-
-	// Ensure we have at least one task
-	if (tasks.length === 0) {
-		tasks.push({
-			title: 'Reflect on current frustrations',
-			description:
-				'Take time to think through the issues mentioned and plan next steps',
-			category: 'Reflection',
-			priority: 'low',
-		});
-	}
-
-	// Remove duplicates and limit to 6 tasks max
-	var uniqueTasks = [];
-	for (var k = 0; k < tasks.length && k < 6; k++) {
-		var task = tasks[k];
-		var isDuplicate = false;
-		for (var l = 0; l < uniqueTasks.length; l++) {
-			if (uniqueTasks[l].title.toLowerCase() === task.title.toLowerCase()) {
-				isDuplicate = true;
-				break;
-			}
-		}
-		if (!isDuplicate) {
-			uniqueTasks.push(task);
-		}
-	}
-
-	return uniqueTasks;
 };
 
 FrustrationToTasksApp.prototype.extractKeywords = function (text) {
@@ -418,14 +452,160 @@ FrustrationToTasksApp.prototype.extractKeywords = function (text) {
 	return sortedWords.slice(0, 3);
 };
 
+FrustrationToTasksApp.prototype.callLLMAPI = function (prompt) {
+	var self = this;
+
+	if (this.llmProvider === 'openai') {
+		var requestBody = {
+			model: 'gpt-4o',
+			messages: [
+				{
+					role: 'user',
+					content: prompt,
+				},
+			],
+			max_tokens: 1000,
+			temperature: 0.7,
+			response_format: {
+				type: 'json_schema',
+				json_schema: {
+					name: 'task_list',
+					strict: true,
+					schema: {
+						type: 'object',
+						properties: {
+							tasks: {
+								type: 'array',
+								minItems: 1,
+								items: {
+									type: 'object',
+									properties: {
+										title: {
+											type: 'string',
+											maxLength: 100,
+										},
+										description: {
+											type: 'string',
+											maxLength: 800,
+										},
+										category: {
+											type: 'string',
+											enum: [
+												'Learning',
+												'Action',
+												'Problem Solving',
+												'Goals',
+												'Simplification',
+												'Organization',
+												'Communication',
+												'Planning',
+												'Research',
+												'General',
+											],
+										},
+										priority: {
+											type: 'string',
+											enum: ['low', 'medium', 'high'],
+										},
+										recurring: {
+											type: 'string',
+											enum: ['none', 'daily', 'weekly', 'monthly'],
+										},
+									},
+									required: [
+										'title',
+										'description',
+										'category',
+										'priority',
+										'recurring',
+									],
+									additionalProperties: false,
+								},
+							},
+						},
+						required: ['tasks'],
+						additionalProperties: false,
+					},
+				},
+			},
+		};
+
+		return fetch('https://api.openai.com/v1/chat/completions', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: 'Bearer ' + this.apiKey,
+			},
+			body: JSON.stringify(requestBody),
+		})
+			.then(function (response) {
+				if (!response.ok) {
+					throw new Error('API request failed: ' + response.status);
+				}
+				return response.json();
+			})
+			.then(function (data) {
+				if (data.choices && data.choices[0] && data.choices[0].message) {
+					var content = data.choices[0].message.content.trim();
+					var parsedContent = JSON.parse(content);
+					return parsedContent.tasks; // Return the tasks array directly
+				} else {
+					throw new Error('Invalid API response format');
+				}
+			});
+	} else if (this.llmProvider === 'anthropic') {
+		// Anthropic doesn't have structured output yet, so we use a more detailed prompt
+		var enhancedPrompt =
+			prompt +
+			'\n\nPlease respond with a valid JSON object containing a "tasks" array. Each task should have exactly these fields: title, description, category, priority. Example format:\n{"tasks": [{"title": "Example task", "description": "Task description", "category": "Action", "priority": "medium"}]}';
+
+		return fetch('https://api.anthropic.com/v1/messages', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'x-api-key': this.apiKey,
+				'anthropic-version': '2023-06-01',
+			},
+			body: JSON.stringify({
+				model: 'claude-3-haiku-20240307',
+				max_tokens: 1000,
+				messages: [
+					{
+						role: 'user',
+						content: enhancedPrompt,
+					},
+				],
+			}),
+		})
+			.then(function (response) {
+				if (!response.ok) {
+					throw new Error('API request failed: ' + response.status);
+				}
+				return response.json();
+			})
+			.then(function (data) {
+				if (data.content && data.content[0] && data.content[0].text) {
+					var content = data.content[0].text.trim();
+					var parsedContent = JSON.parse(content);
+					return parsedContent.tasks; // Return the tasks array directly
+				} else {
+					throw new Error('Invalid API response format');
+				}
+			});
+	} else {
+		return Promise.reject(new Error('Unsupported LLM provider'));
+	}
+};
+
 FrustrationToTasksApp.prototype.showProcessingModal = function () {
 	var modal = document.getElementById('processing-modal');
 	modal.classList.add('active');
 
 	var steps = [
-		'Identifying key issues',
-		'Analyzing frustration patterns',
-		'Generating actionable tasks',
+		'Collecting all frustrations',
+		'Identifying patterns and themes',
+		'Analyzing root causes',
+		'Generating comprehensive task list',
 		'Prioritizing recommendations',
 	];
 
@@ -465,6 +645,18 @@ FrustrationToTasksApp.prototype.updateTasksDisplay = function () {
 		filteredTasks = this.tasks.filter(function (task) {
 			return !task.completed;
 		});
+	} else if (this.currentFilter === 'high') {
+		filteredTasks = this.tasks.filter(function (task) {
+			return task.priority === 'high';
+		});
+	} else if (this.currentFilter === 'medium') {
+		filteredTasks = this.tasks.filter(function (task) {
+			return task.priority === 'medium';
+		});
+	} else if (this.currentFilter === 'low') {
+		filteredTasks = this.tasks.filter(function (task) {
+			return task.priority === 'low';
+		});
 	}
 
 	if (filteredTasks.length === 0) {
@@ -478,9 +670,25 @@ FrustrationToTasksApp.prototype.updateTasksDisplay = function () {
 	var html = '';
 	for (var i = 0; i < filteredTasks.length; i++) {
 		var task = filteredTasks[i];
+		var recurringClass =
+			task.recurring && task.recurring !== 'none' ? ' recurring' : '';
+		var recurringIcon =
+			task.recurring && task.recurring !== 'none'
+				? '<span class="recurring-icon" title="Recurring ' +
+				  task.recurring +
+				  '">↻</span>'
+				: '';
+		var detailsButton =
+			task.description && task.description.trim()
+				? '<button class="details-toggle-btn" onclick="app.toggleDetails(' +
+				  task.id +
+				  ')" title="Show/Hide Details">ℹ️</button>'
+				: '';
+
 		html +=
 			'<div class="task-item ' +
 			(task.completed ? 'completed' : '') +
+			recurringClass +
 			'" data-task-id="' +
 			task.id +
 			'">' +
@@ -492,11 +700,24 @@ FrustrationToTasksApp.prototype.updateTasksDisplay = function () {
 			')"></div>' +
 			'<div class="task-title">' +
 			task.title +
+			recurringIcon +
 			'</div>' +
-			'</div>' +
-			'<div class="task-description">' +
-			task.description +
-			'</div>' +
+			detailsButton +
+			'</div>';
+
+		// Add details section with description
+		if (task.description && task.description.trim()) {
+			html +=
+				'<div class="task-details" id="details-' +
+				task.id +
+				'" style="display: none;">' +
+				'<div class="details-content">' +
+				task.description.replace(/\n/g, '<br>') +
+				'</div>' +
+				'</div>';
+		}
+
+		html +=
 			'<div class="task-metadata">' +
 			'<span class="task-category">' +
 			task.category +
@@ -506,6 +727,11 @@ FrustrationToTasksApp.prototype.updateTasksDisplay = function () {
 			'">' +
 			task.priority.toUpperCase() +
 			'</span>' +
+			(task.recurring && task.recurring !== 'none'
+				? '<span class="task-recurring">' +
+				  task.recurring.toUpperCase() +
+				  '</span>'
+				: '') +
 			'</div>' +
 			'</div>';
 	}
@@ -515,16 +741,42 @@ FrustrationToTasksApp.prototype.updateTasksDisplay = function () {
 FrustrationToTasksApp.prototype.toggleTask = function (taskId) {
 	for (var i = 0; i < this.tasks.length; i++) {
 		if (this.tasks[i].id === taskId) {
-			this.tasks[i].completed = !this.tasks[i].completed;
-			this.tasks[i].completedAt = this.tasks[i].completed
-				? new Date().toISOString()
-				: null;
+			var task = this.tasks[i];
+			task.completed = !task.completed;
+
+			if (task.completed) {
+				task.completedAt = new Date().toISOString();
+
+				// Handle recurring tasks
+				if (task.recurring && task.recurring !== 'none') {
+					var self = this;
+					// Reset the task after a short delay to show completion feedback
+					setTimeout(function () {
+						self.resetRecurringTask(taskId);
+					}, 2000);
+				}
+			} else {
+				task.completedAt = null;
+			}
 			break;
 		}
 	}
 	this.saveToStorage('tasks', this.tasks);
 	this.updateTasksDisplay();
 	this.updateStats();
+	this.updatePriorityBreakdown();
+	this.updateRecentCompletions();
+};
+
+FrustrationToTasksApp.prototype.toggleDetails = function (taskId) {
+	var detailsElement = document.getElementById('details-' + taskId);
+	if (detailsElement) {
+		if (detailsElement.style.display === 'none') {
+			detailsElement.style.display = 'block';
+		} else {
+			detailsElement.style.display = 'none';
+		}
+	}
 };
 
 FrustrationToTasksApp.prototype.updateStats = function () {
@@ -537,6 +789,151 @@ FrustrationToTasksApp.prototype.updateStats = function () {
 	document.getElementById('total-tasks').textContent = total;
 	document.getElementById('completed-tasks').textContent = completed;
 	document.getElementById('completion-rate').textContent = rate + '%';
+};
+
+FrustrationToTasksApp.prototype.updatePriorityBreakdown = function () {
+	var highCount = this.tasks.filter(function (t) {
+		return t.priority === 'high';
+	}).length;
+	var mediumCount = this.tasks.filter(function (t) {
+		return t.priority === 'medium';
+	}).length;
+	var lowCount = this.tasks.filter(function (t) {
+		return t.priority === 'low';
+	}).length;
+
+	document.getElementById('high-priority-count').textContent = highCount;
+	document.getElementById('medium-priority-count').textContent = mediumCount;
+	document.getElementById('low-priority-count').textContent = lowCount;
+};
+
+FrustrationToTasksApp.prototype.updateRecentCompletions = function () {
+	var recentCompletions = this.tasks
+		.filter(function (t) {
+			return t.completed && t.completedAt;
+		})
+		.sort(function (a, b) {
+			return new Date(b.completedAt) - new Date(a.completedAt);
+		})
+		.slice(0, 5);
+
+	var recentList = document.getElementById('recent-completions-list');
+
+	if (recentCompletions.length === 0) {
+		recentList.innerHTML = '<p class="no-recent">No recent completions</p>';
+		return;
+	}
+
+	var html = '';
+	for (var i = 0; i < recentCompletions.length; i++) {
+		var task = recentCompletions[i];
+		var timeAgo = this.getTimeAgo(new Date(task.completedAt));
+		html +=
+			'<div class="recent-completion-item">' +
+			'<span class="recent-completion-title">' +
+			task.title +
+			'</span>' +
+			'<span class="recent-completion-time">' +
+			timeAgo +
+			'</span>' +
+			'</div>';
+	}
+	recentList.innerHTML = html;
+};
+
+FrustrationToTasksApp.prototype.getTimeAgo = function (date) {
+	var now = new Date();
+	var diffMs = now - date;
+	var diffMinutes = Math.floor(diffMs / (1000 * 60));
+	var diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+	var diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+	if (diffMinutes < 60) {
+		return diffMinutes <= 1 ? 'Just now' : diffMinutes + ' min ago';
+	} else if (diffHours < 24) {
+		return diffHours === 1 ? '1 hour ago' : diffHours + ' hours ago';
+	} else {
+		return diffDays === 1 ? '1 day ago' : diffDays + ' days ago';
+	}
+};
+
+FrustrationToTasksApp.prototype.resetRecurringTask = function (taskId) {
+	for (var i = 0; i < this.tasks.length; i++) {
+		if (this.tasks[i].id === taskId) {
+			var task = this.tasks[i];
+			if (task.recurring && task.recurring !== 'none') {
+				task.completed = false;
+				task.completedAt = null;
+				task.nextDue = this.calculateNextDueDate(task.recurring);
+
+				this.saveToStorage('tasks', this.tasks);
+				this.updateTasksDisplay();
+				this.updateStats();
+				this.updatePriorityBreakdown();
+				this.updateRecentCompletions();
+
+				this.showNotification(
+					'Recurring task "' + task.title + '" has been reset'
+				);
+			}
+			break;
+		}
+	}
+};
+
+FrustrationToTasksApp.prototype.calculateNextDueDate = function (recurring) {
+	var now = new Date();
+	var nextDue = new Date(now);
+
+	switch (recurring) {
+		case 'daily':
+			nextDue.setDate(now.getDate() + 1);
+			break;
+		case 'weekly':
+			nextDue.setDate(now.getDate() + 7);
+			break;
+		case 'monthly':
+			nextDue.setMonth(now.getMonth() + 1);
+			break;
+		default:
+			return null;
+	}
+
+	return nextDue.toISOString();
+};
+
+FrustrationToTasksApp.prototype.checkRecurringTasks = function () {
+	var now = new Date();
+	var hasChanges = false;
+
+	for (var i = 0; i < this.tasks.length; i++) {
+		var task = this.tasks[i];
+
+		// Check if this is a completed recurring task that's past its next due date
+		if (
+			task.recurring &&
+			task.recurring !== 'none' &&
+			task.completed &&
+			task.nextDue
+		) {
+			var nextDue = new Date(task.nextDue);
+
+			if (now >= nextDue) {
+				task.completed = false;
+				task.completedAt = null;
+				task.nextDue = this.calculateNextDueDate(task.recurring);
+				hasChanges = true;
+			}
+		}
+	}
+
+	if (hasChanges) {
+		this.saveToStorage('tasks', this.tasks);
+		this.updateTasksDisplay();
+		this.updateStats();
+		this.updatePriorityBreakdown();
+		this.updateRecentCompletions();
+	}
 };
 
 FrustrationToTasksApp.prototype.setFilter = function (filter) {
@@ -560,6 +957,8 @@ FrustrationToTasksApp.prototype.clearCompletedTasks = function () {
 	this.saveToStorage('tasks', this.tasks);
 	this.updateTasksDisplay();
 	this.updateStats();
+	this.updatePriorityBreakdown();
+	this.updateRecentCompletions();
 	this.showNotification('Completed tasks cleared!');
 };
 
@@ -620,6 +1019,74 @@ FrustrationToTasksApp.prototype.loadVentToInput = function (ventId) {
 			break;
 		}
 	}
+};
+
+FrustrationToTasksApp.prototype.showSettingsModal = function () {
+	var modal = document.getElementById('settings-modal');
+	modal.classList.add('active');
+
+	// Load current settings
+	document.getElementById('api-key-input').value = this.apiKey;
+	document.getElementById('llm-provider-select').value = this.llmProvider;
+	document.getElementById('custom-prompt-input').value = this.customPrompt;
+};
+
+FrustrationToTasksApp.prototype.hideSettingsModal = function () {
+	document.getElementById('settings-modal').classList.remove('active');
+};
+
+FrustrationToTasksApp.prototype.resetPrompt = function () {
+	document.getElementById('custom-prompt-input').value = '';
+	this.showNotification('Prompt reset to default');
+};
+
+FrustrationToTasksApp.prototype.loadExamplePrompt = function () {
+	var examplePrompt = `You are a productivity coach helping someone turn their collection of frustrations into a strategic action plan.
+
+Analyze these frustrations: "{text}"
+
+Look for patterns and root causes across all frustrations. Create 5-8 practical tasks that address the core issues holistically. Focus on:
+- Small, manageable steps (can be done in 30 minutes or less)
+- Clear actions with specific outcomes
+- Building momentum and confidence
+- Addressing systemic issues, not just symptoms
+
+For each task, provide:
+- title: Action-oriented title (under 50 characters)
+- description: Longer detailed explanation including what to do, why it helps, any tips, context, or step-by-step guidance if needed
+- category: Choose from Action, Planning, Communication, Learning, Organization
+- priority: high (urgent/blocks other work), medium (important), or low (nice to have)
+- recurring: Set to "none" for one-time tasks, or "daily", "weekly", or "monthly" for habits and maintenance tasks
+
+Make the tasks feel achievable and motivating, creating a cohesive plan that tackles the bigger picture.`;
+
+	document.getElementById('custom-prompt-input').value = examplePrompt;
+	this.showNotification('Example prompt loaded');
+};
+
+FrustrationToTasksApp.prototype.saveSettings = function () {
+	var apiKey = document.getElementById('api-key-input').value.trim();
+	var provider = document.getElementById('llm-provider-select').value;
+	var customPrompt = document
+		.getElementById('custom-prompt-input')
+		.value.trim();
+
+	if (!apiKey) {
+		this.showNotification('Please enter an API key');
+		return;
+	}
+
+	this.apiKey = apiKey;
+	this.llmProvider = provider;
+	this.customPrompt = customPrompt;
+
+	// Save to storage
+	this.saveToStorage('apiKey', this.apiKey);
+	this.saveToStorage('llmProvider', this.llmProvider);
+	this.saveToStorage('customPrompt', this.customPrompt);
+
+	this.hideSettingsModal();
+	this.showNotification('Settings saved successfully!');
 };
 
 FrustrationToTasksApp.prototype.showNotification = function (message) {

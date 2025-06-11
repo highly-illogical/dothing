@@ -5,20 +5,45 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Frustration to Tasks</title>
 		<link rel="stylesheet" href="styles.css" />
+
+		<!-- PWA Meta Tags -->
+		<meta name="theme-color" content="#007bff" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta
+			name="apple-mobile-web-app-status-bar-style"
+			content="black-translucent"
+		/>
+		<meta name="apple-mobile-web-app-title" content="F2T" />
+		<meta name="mobile-web-app-capable" content="yes" />
+
+		<!-- PWA Manifest -->
+		<link rel="manifest" href="manifest.json" />
+
+		<!-- Apple Touch Icons -->
+		<link rel="apple-touch-icon" href="icon-192.png" />
+		<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+		<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png" />
 	</head>
 	<body>
 		<div class="app-container">
-			<!-- Mode Toggle -->
-			<div class="mode-toggle">
-				<button id="vent-mode-btn" class="mode-btn active">Vent Mode</button>
-				<button id="action-mode-btn" class="mode-btn">Action Mode</button>
+			<!-- Header with Settings -->
+			<div class="app-header">
+				<div class="mode-toggle">
+					<button id="vent-mode-btn" class="mode-btn active">Vent Mode</button>
+					<button id="task-mode-btn" class="mode-btn">Task List</button>
+					<button id="progress-mode-btn" class="mode-btn">Progress</button>
+				</div>
+				<button id="settings-btn" class="settings-btn">Settings</button>
 			</div>
 
 			<!-- Vent Mode Interface -->
 			<div id="vent-mode" class="mode-interface active">
 				<div class="mode-header">
 					<h1>What's frustrating you?</h1>
-					<p>Write freely about what's bothering you. No structure needed.</p>
+					<p>
+						Write freely about what's bothering you. All your vents will be
+						processed together to create a comprehensive task list.
+					</p>
 				</div>
 
 				<div class="input-section">
@@ -30,7 +55,7 @@
 
 					<div class="input-actions">
 						<button id="process-btn" class="primary-btn">
-							Convert to Tasks
+							Convert All Vents to Tasks
 						</button>
 						<button id="clear-btn" class="secondary-btn">Clear</button>
 					</div>
@@ -42,32 +67,23 @@
 				</div>
 			</div>
 
-			<!-- Action Mode Interface -->
-			<div id="action-mode" class="mode-interface">
+			<!-- Task List Mode Interface -->
+			<div id="task-mode" class="mode-interface">
 				<div class="mode-header">
 					<h1>Your Tasks</h1>
 					<p>Tasks generated from your frustrations, ready to tackle.</p>
-				</div>
-
-				<div class="stats-section">
-					<div class="stat-card">
-						<span class="stat-number" id="total-tasks">0</span>
-						<span class="stat-label">Total</span>
-					</div>
-					<div class="stat-card">
-						<span class="stat-number" id="completed-tasks">0</span>
-						<span class="stat-label">Done</span>
-					</div>
-					<div class="stat-card">
-						<span class="stat-number" id="completion-rate">0%</span>
-						<span class="stat-label">Progress</span>
-					</div>
 				</div>
 
 				<div class="task-filters">
 					<button class="filter-btn active" data-filter="all">All</button>
 					<button class="filter-btn" data-filter="pending">Pending</button>
 					<button class="filter-btn" data-filter="completed">Completed</button>
+					<div class="filter-divider"></div>
+					<button class="filter-btn" data-filter="high">High Priority</button>
+					<button class="filter-btn" data-filter="medium">
+						Medium Priority
+					</button>
+					<button class="filter-btn" data-filter="low">Low Priority</button>
 				</div>
 
 				<div class="tasks-section">
@@ -86,6 +102,67 @@
 					</button>
 				</div>
 			</div>
+
+			<!-- Progress Mode Interface -->
+			<div id="progress-mode" class="mode-interface">
+				<div class="mode-header">
+					<h1>Your Progress</h1>
+					<p>
+						Track your productivity and see how you're turning frustrations into
+						achievements.
+					</p>
+				</div>
+
+				<div class="stats-section">
+					<div class="stat-card">
+						<span class="stat-number" id="total-tasks">0</span>
+						<span class="stat-label">Total Tasks</span>
+					</div>
+					<div class="stat-card">
+						<span class="stat-number" id="completed-tasks">0</span>
+						<span class="stat-label">Completed</span>
+					</div>
+					<div class="stat-card">
+						<span class="stat-number" id="completion-rate">0%</span>
+						<span class="stat-label">Completion Rate</span>
+					</div>
+				</div>
+
+				<div class="priority-breakdown">
+					<h3>Tasks by Priority</h3>
+					<div class="priority-stats">
+						<div class="priority-stat high-priority">
+							<span class="priority-dot"></span>
+							<span class="priority-label">High Priority</span>
+							<span class="priority-count" id="high-priority-count">0</span>
+						</div>
+						<div class="priority-stat medium-priority">
+							<span class="priority-dot"></span>
+							<span class="priority-label">Medium Priority</span>
+							<span class="priority-count" id="medium-priority-count">0</span>
+						</div>
+						<div class="priority-stat low-priority">
+							<span class="priority-dot"></span>
+							<span class="priority-label">Low Priority</span>
+							<span class="priority-count" id="low-priority-count">0</span>
+						</div>
+					</div>
+				</div>
+
+				<div class="progress-chart">
+					<h3>Completion Trend</h3>
+					<div class="chart-placeholder">
+						<p>Complete more tasks to see your progress trend</p>
+					</div>
+				</div>
+
+				<div class="recent-completions">
+					<h3>Recently Completed</h3>
+					<div id="recent-completions-list" class="recent-list">
+						<p class="no-recent">No recent completions</p>
+					</div>
+				</div>
+			</div>
 		</div>
 
 		<!-- Processing Modal -->
@@ -99,6 +176,115 @@
 			</div>
 		</div>
 
+		<!-- Settings Modal -->
+		<div id="settings-modal" class="modal">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h2>Settings</h2>
+					<button id="close-settings-btn" class="close-btn">&times;</button>
+				</div>
+				<div class="modal-body">
+					<div class="form-group">
+						<label for="llm-provider-select">LLM Provider:</label>
+						<select id="llm-provider-select">
+							<option value="openai">OpenAI (GPT)</option>
+							<option value="anthropic">Anthropic (Claude)</option>
+						</select>
+					</div>
+					<div class="form-group">
+						<label for="api-key-input">API Key:</label>
+						<input
+							type="password"
+							id="api-key-input"
+							placeholder="Enter your API key"
+						/>
+						<small class="help-text"
+							>Your API key is stored locally and never shared.</small
+						>
+					</div>
+					<div class="form-group">
+						<label for="custom-prompt-input">Custom Prompt:</label>
+						<textarea
+							id="custom-prompt-input"
+							placeholder="Customize how AI processes your frustrations..."
+							rows="8"
+						></textarea>
+						<small class="help-text"
+							>Use {text} as a placeholder for the frustration text. Leave empty
+							to use default prompt.</small
+						>
+						<div class="prompt-actions">
+							<button type="button" id="reset-prompt-btn" class="secondary-btn">
+								Reset to Default
+							</button>
+							<button type="button" id="load-example-btn" class="secondary-btn">
+								Load Example
+							</button>
+						</div>
+					</div>
+					<div class="setup-instructions">
+						<h4>How to get your API key:</h4>
+						<div class="provider-instructions">
+							<div class="openai-instructions">
+								<strong>OpenAI:</strong>
+								<ol>
+									<li>
+										Go to
+										<a
+											href="https://platform.openai.com/api-keys"
+											target="_blank"
+											>platform.openai.com/api-keys</a
+										>
+									</li>
+									<li>Sign in or create an account</li>
+									<li>Click "Create new secret key"</li>
+									<li>Copy the key and paste it above</li>
+								</ol>
+							</div>
+							<div class="anthropic-instructions">
+								<strong>Anthropic:</strong>
+								<ol>
+									<li>
+										Go to
+										<a href="https://console.anthropic.com/" target="_blank"
+											>console.anthropic.com</a
+										>
+									</li>
+									<li>Sign in or create an account</li>
+									<li>Go to API Keys section</li>
+									<li>Create a new key and paste it above</li>
+								</ol>
+							</div>
+						</div>
+					</div>
+				</div>
+				<div class="modal-footer">
+					<button id="save-settings-btn" class="primary-btn">
+						Save Settings
+					</button>
+				</div>
+			</div>
+		</div>
+
 		<script src="script.js"></script>
+
+		<!-- PWA Service Worker Registration -->
+		<script>
+			if ('serviceWorker' in navigator) {
+				window.addEventListener('load', function () {
+					navigator.serviceWorker
+						.register('/sw.js')
+						.then(function (registration) {
+							console.log(
+								'ServiceWorker registration successful with scope: ',
+								registration.scope
+							);
+						})
+						.catch(function (err) {
+							console.log('ServiceWorker registration failed: ', err);
+						});
+				});
+			}
+		</script>
 	</body>
 </html>

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Icon Generator</title>
+	</head>
+	<body>
+		<h1>PWA Icon Generator</h1>
+		<p>This page will generate placeholder icons for your PWA.</p>
+
+		<canvas
+			id="icon192"
+			width="192"
+			height="192"
+			style="border: 1px solid #ccc"
+		></canvas>
+		<canvas
+			id="icon512"
+			width="512"
+			height="512"
+			style="border: 1px solid #ccc"
+		></canvas>
+
+		<br /><br />
+		<button onclick="generateIcons()">Generate Icons</button>
+		<button onclick="downloadIcons()">Download Icons</button>
+
+		<script>
+			function generateIcons() {
+				// Generate 192x192 icon
+				const canvas192 = document.getElementById('icon192');
+				const ctx192 = canvas192.getContext('2d');
+
+				// Background
+				ctx192.fillStyle = '#007bff';
+				ctx192.fillRect(0, 0, 192, 192);
+
+				// White text
+				ctx192.fillStyle = 'white';
+				ctx192.font = 'bold 64px Arial';
+				ctx192.textAlign = 'center';
+				ctx192.fillText('F2T', 96, 120);
+
+				// Generate 512x512 icon
+				const canvas512 = document.getElementById('icon512');
+				const ctx512 = canvas512.getContext('2d');
+
+				// Background
+				ctx512.fillStyle = '#007bff';
+				ctx512.fillRect(0, 0, 512, 512);
+
+				// White text
+				ctx512.fillStyle = 'white';
+				ctx512.font = 'bold 180px Arial';
+				ctx512.textAlign = 'center';
+				ctx512.fillText('F2T', 256, 320);
+			}
+
+			function downloadIcons() {
+				// Download 192x192
+				const canvas192 = document.getElementById('icon192');
+				const link192 = document.createElement('a');
+				link192.download = 'icon-192.png';
+				link192.href = canvas192.toDataURL();
+				link192.click();
+
+				// Download 512x512
+				const canvas512 = document.getElementById('icon512');
+				const link512 = document.createElement('a');
+				link512.download = 'icon-512.png';
+				link512.href = canvas512.toDataURL();
+				link512.click();
+			}
+
+			// Generate icons automatically when page loads
+			window.onload = generateIcons;
+		</script>
+	</body>
+</html>
