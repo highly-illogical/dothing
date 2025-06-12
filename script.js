@@ -1,20 +1,29 @@
 // Browser-compatible version using function constructors instead of ES6 classes
 function FrustrationToTasksApp() {
 	this.currentMode = 'vent';
-	this.tasks = this.loadFromStorage('tasks') || [];
-	this.recentVents = this.loadFromStorage('recentVents') || [];
-	this.currentFilter = 'all';
+	this.tasks = []; // Will be populated from Supabase
+	this.allVents = []; // Will be populated from Supabase
 	this.apiKey = this.loadFromStorage('apiKey') || '';
 	this.llmProvider = this.loadFromStorage('llmProvider') || 'openai';
 	this.customPrompt = this.loadFromStorage('customPrompt') || '';
 
+	this.supabase = window.supabase.createClient(
+		window.CONFIG.supabaseUrl,
+		window.CONFIG.supabaseKey
+	);
+
 	this.init();
 }
 
-FrustrationToTasksApp.prototype.init = function () {
+FrustrationToTasksApp.prototype.init = async function () {
+	// Load both vents and tasks from Supabase
+	await Promise.all([
+		this.loadVentsFromSupabase(),
+		this.loadTasksFromSupabase(),
+	]);
+
 	this.bindEvents();
 	this.updateUI();
-	this.showRecentVents();
 	this.checkRecurringTasks();
 
 	// Check for overdue recurring tasks every 5 minutes
@@ -32,6 +41,11 @@ FrustrationToTasksApp.prototype.bindEvents = function () {
 		.getElementById('vent-mode-btn')
 		.addEventListener('click', function () {
 			self.switchMode('vent');
+		});
+	document
+		.getElementById('vents-mode-btn')
+		.addEventListener('click', function () {
+			self.switchMode('vents');
 		});
 	document
 		.getElementById('task-mode-btn')
@@ -64,6 +78,18 @@ FrustrationToTasksApp.prototype.bindEvents = function () {
 			self.exportTasks();
 		});
 
+	// Vents mode actions
+	document
+		.getElementById('clear-all-vents-btn')
+		.addEventListener('click', function () {
+			self.clearAllVents();
+		});
+	document
+		.getElementById('export-vents-btn')
+		.addEventListener('click', function () {
+			self.exportVents();
+		});
+
 	// Settings modal
 	document
 		.getElementById('settings-btn')
@@ -91,13 +117,39 @@ FrustrationToTasksApp.prototype.bindEvents = function () {
 			self.loadExamplePrompt();
 		});
 
-	// Task filters
-	var filterBtns = document.querySelectorAll('.filter-btn');
-	for (var i = 0; i < filterBtns.length; i++) {
-		filterBtns[i].addEventListener('click', function (e) {
-			self.setFilter(e.target.dataset.filter);
+	// Task notes modal
+	document
+		.getElementById('save-task-notes-btn')
+		.addEventListener('click', function () {
+			self.saveTaskNotes();
 		});
-	}
+	document
+		.getElementById('close-task-notes-btn')
+		.addEventListener('click', function () {
+			self.hideTaskNotesModal();
+		});
+	document
+		.getElementById('cancel-task-notes-btn')
+		.addEventListener('click', function () {
+			self.hideTaskNotesModal();
+		});
+
+	// Task filters
+	document
+		.getElementById('status-filter')
+		.addEventListener('change', function () {
+			self.applyFilters();
+		});
+	document
+		.getElementById('priority-filter')
+		.addEventListener('change', function () {
+			self.applyFilters();
+		});
+	document
+		.getElementById('recurrence-filter')
+		.addEventListener('change', function () {
+			self.applyFilters();
+		});
 
 	// Auto-save textarea content
 	document
@@ -114,6 +166,13 @@ FrustrationToTasksApp.prototype.bindEvents = function () {
 	if (savedInput) {
 		document.getElementById('frustration-input').value = savedInput;
 	}
+
+	// Add new event listener for generating tasks from vents
+	document
+		.getElementById('generate-tasks-btn')
+		.addEventListener('click', function () {
+			self.generateTasksFromVents();
+		});
 };
 
 FrustrationToTasksApp.prototype.switchMode = function (mode) {
@@ -139,106 +198,51 @@ FrustrationToTasksApp.prototype.switchMode = function (mode) {
 		this.updateStats();
 		this.updatePriorityBreakdown();
 		this.updateRecentCompletions();
+	} else if (mode === 'vents') {
+		this.updateAllVentsDisplay();
 	}
 };
 
-FrustrationToTasksApp.prototype.processFrustration = function () {
-	var self = this;
+FrustrationToTasksApp.prototype.processFrustration = async function () {
 	var input = document.getElementById('frustration-input').value.trim();
 
-	// Check if API key is configured
-	if (!this.apiKey) {
-		this.showNotification('Please configure your API key in settings first!');
-		this.showSettingsModal();
+	if (!input) {
+		this.showNotification('Please enter some text first');
 		return;
 	}
 
-	// Show processing modal
-	this.showProcessingModal();
-
-	// Save current input to recent vents if it exists
-	if (input) {
+	try {
 		var ventEntry = {
-			id: Date.now(),
 			text: input,
 			date: new Date().toISOString(),
 			processed: false,
 		};
 
-		this.recentVents.unshift(ventEntry);
-		if (this.recentVents.length > 10) {
-			this.recentVents = this.recentVents.slice(0, 10);
+		// Insert into Supabase
+		const { data, error } = await this.supabase
+			.from('vents')
+			.insert([ventEntry])
+			.select();
+
+		if (error) {
+			console.error('Error saving vent to Supabase:', error);
+			this.showNotification('Error saving vent!');
+			return;
 		}
+
+		// Use the ID from Supabase
+		ventEntry = data[0];
+		this.allVents.unshift(ventEntry);
+		this.saveToStorage('allVents', this.allVents);
+
+		// Clear input and show success message
+		document.getElementById('frustration-input').value = '';
+		this.saveToStorage('currentInput', '');
+		this.showNotification('Vent saved successfully!');
+	} catch (error) {
+		console.error('Error in processFrustration:', error);
+		this.showNotification('Error saving vent!');
 	}
-
-	// Collect all vents text
-	var allVentsText = [];
-	if (input) {
-		allVentsText.push(input);
-	}
-
-	// Add recent vents (up to 5 most recent)
-	var recentVentsToProcess = this.recentVents.slice(0, 5);
-	for (var i = 0; i < recentVentsToProcess.length; i++) {
-		var vent = recentVentsToProcess[i];
-		// Avoid duplicating the current input
-		if (vent.text !== input) {
-			allVentsText.push(vent.text);
-		}
-	}
-
-	if (allVentsText.length === 0) {
-		this.hideProcessingModal();
-		this.showNotification('Please enter some frustrations to process');
-		return;
-	}
-
-	// Process all frustrations together using LLM
-	this.extractTasksFromAllFrustrations(allVentsText)
-		.then(function (newTasks) {
-			// Replace entire task list with new comprehensive list
-			self.tasks = [];
-			for (var i = 0; i < newTasks.length; i++) {
-				var task = newTasks[i];
-				task.id = Date.now() + Math.random() + i;
-				task.createdAt = new Date().toISOString();
-				task.completed = false;
-				self.tasks.push(task);
-			}
-
-			// Mark all processed vents as processed
-			for (var j = 0; j < self.recentVents.length; j++) {
-				self.recentVents[j].processed = true;
-			}
-
-			// Save to storage
-			self.saveToStorage('tasks', self.tasks);
-			self.saveToStorage('recentVents', self.recentVents);
-
-			// Hide processing modal
-			self.hideProcessingModal();
-
-			// Clear input and switch to task mode
-			document.getElementById('frustration-input').value = '';
-			self.saveToStorage('currentInput', '');
-			self.switchMode('task');
-
-			// Show success feedback
-			self.showNotification(
-				'Generated ' +
-					newTasks.length +
-					' actionable tasks from ' +
-					allVentsText.length +
-					' frustrations!'
-			);
-
-			self.showRecentVents();
-		})
-		.catch(function (error) {
-			console.error('Error processing frustrations:', error);
-			self.hideProcessingModal();
-			self.showNotification('Error processing frustrations: ' + error.message);
-		});
 };
 
 FrustrationToTasksApp.prototype.extractTasksFromAllFrustrations = function (
@@ -246,27 +250,25 @@ FrustrationToTasksApp.prototype.extractTasksFromAllFrustrations = function (
 ) {
 	var self = this;
 
-	var defaultPrompt = `You are a helpful assistant that converts people's frustrations and complaints into actionable tasks. 
-
-Please analyze the following collection of frustrations/vents and convert them into a comprehensive set of specific, actionable tasks that could help address the underlying issues across ALL the frustrations.
-
-Look for patterns, common themes, and root causes across all the frustrations. Create tasks that address the root causes, but focus more on things that are immediately doable, not things that require too much planning or organization.
-
-For each task, provide:
-- title: A clear, concise title (don't use initcaps for every word)
-- description: A longer, detailed description that explains what needs to be done, why it's important, and any helpful context, tips, or suggestions. This will be shown in a collapsible panel when the user wants more details.
-- category: One of these categories: Learning, Action, Problem Solving, Goals, Simplification, Organization, Communication, Planning, Research, or General
-- priority: low, medium, or high
-- recurring: Set to "none" for one-time tasks, or "daily", "weekly", or "monthly" for recurring tasks. Use recurring tasks for habits, maintenance, or regular check-ins that would help prevent similar frustrations.
-
-Frustrations:
-{text}`;
-
-	var prompt = this.customPrompt || defaultPrompt;
+	var prompt = this.customPrompt || this.getDefaultPrompt();
 	var combinedText = '';
 	for (var i = 0; i < allVentsText.length; i++) {
 		combinedText += i + 1 + '. ' + allVentsText[i] + '\n\n';
 	}
+
+	// Add existing task notes if they exist
+	var existingTasksWithNotes = this.tasks.filter(function (task) {
+		return task.notes && task.notes.trim();
+	});
+
+	if (existingTasksWithNotes.length > 0) {
+		combinedText += '\n\nExisting task notes to consider:\n';
+		for (var j = 0; j < existingTasksWithNotes.length; j++) {
+			var task = existingTasksWithNotes[j];
+			combinedText += '- ' + task.title + ': ' + task.notes + '\n';
+		}
+	}
+
 	prompt = prompt.replace('{text}', combinedText);
 
 	return this.callLLMAPI(prompt).then(function (tasks) {
@@ -288,6 +290,25 @@ Frustrations:
 						? task.recurring.toLowerCase()
 						: 'none';
 
+					// Process subtasks if they exist
+					var processedSubtasks = [];
+					if (task.subtasks && Array.isArray(task.subtasks)) {
+						for (var s = 0; s < task.subtasks.length; s++) {
+							var subtaskText =
+								typeof task.subtasks[s] === 'string'
+									? task.subtasks[s]
+									: task.subtasks[s].text || '';
+
+							if (subtaskText.trim()) {
+								processedSubtasks.push({
+									text: subtaskText.trim().substring(0, 200),
+									completed: false,
+									id: Date.now() + Math.random() + s,
+								});
+							}
+						}
+					}
+
 					validTasks.push({
 						title: task.title.substring(0, 100),
 						description: task.description.substring(0, 800),
@@ -300,6 +321,7 @@ Frustrations:
 						recurring: recurringValue,
 						nextDue:
 							recurringValue !== 'none' ? new Date().toISOString() : null,
+						subtasks: processedSubtasks,
 					});
 				}
 			}
@@ -314,6 +336,7 @@ Frustrations:
 					priority: 'medium',
 					recurring: 'none',
 					nextDue: null,
+					subtasks: [],
 				});
 			}
 
@@ -330,126 +353,11 @@ Frustrations:
 					priority: 'medium',
 					recurring: 'none',
 					nextDue: null,
+					subtasks: [],
 				},
 			];
 		}
 	});
-};
-
-FrustrationToTasksApp.prototype.extractKeywords = function (text) {
-	var stopWords = [
-		'i',
-		'me',
-		'my',
-		'myself',
-		'we',
-		'our',
-		'ours',
-		'ourselves',
-		'you',
-		'your',
-		'yours',
-		'yourself',
-		'yourselves',
-		'he',
-		'him',
-		'his',
-		'himself',
-		'she',
-		'her',
-		'hers',
-		'herself',
-		'it',
-		'its',
-		'itself',
-		'they',
-		'them',
-		'their',
-		'theirs',
-		'themselves',
-		'what',
-		'which',
-		'who',
-		'whom',
-		'this',
-		'that',
-		'these',
-		'those',
-		'am',
-		'is',
-		'are',
-		'was',
-		'were',
-		'be',
-		'been',
-		'being',
-		'have',
-		'has',
-		'had',
-		'having',
-		'do',
-		'does',
-		'did',
-		'doing',
-		'a',
-		'an',
-		'the',
-		'and',
-		'but',
-		'if',
-		'or',
-		'because',
-		'as',
-		'until',
-		'while',
-		'of',
-		'at',
-		'by',
-		'for',
-		'with',
-		'about',
-		'against',
-		'between',
-		'into',
-		'through',
-		'during',
-		'before',
-		'after',
-		'above',
-		'below',
-		'up',
-		'down',
-		'in',
-		'out',
-		'on',
-		'off',
-		'over',
-		'under',
-		'again',
-		'further',
-		'then',
-		'once',
-	];
-
-	var words = text
-		.toLowerCase()
-		.replace(/[^\w\s]/g, ' ')
-		.split(/\s+/)
-		.filter(function (word) {
-			return word.length > 3 && stopWords.indexOf(word) === -1;
-		});
-
-	var wordFreq = {};
-	for (var i = 0; i < words.length; i++) {
-		var word = words[i];
-		wordFreq[word] = (wordFreq[word] || 0) + 1;
-	}
-
-	var sortedWords = Object.keys(wordFreq).sort(function (a, b) {
-		return wordFreq[b] - wordFreq[a];
-	});
-
-	return sortedWords.slice(0, 3);
 };
 
 FrustrationToTasksApp.prototype.callLLMAPI = function (prompt) {
@@ -511,6 +419,14 @@ FrustrationToTasksApp.prototype.callLLMAPI = function (prompt) {
 											type: 'string',
 											enum: ['none', 'daily', 'weekly', 'monthly'],
 										},
+										subtasks: {
+											type: 'array',
+											items: {
+												type: 'string',
+												maxLength: 200,
+											},
+											maxItems: 10,
+										},
 									},
 									required: [
 										'title',
@@ -518,6 +434,7 @@ FrustrationToTasksApp.prototype.callLLMAPI = function (prompt) {
 										'category',
 										'priority',
 										'recurring',
+										'subtasks',
 									],
 									additionalProperties: false,
 								},
@@ -540,7 +457,38 @@ FrustrationToTasksApp.prototype.callLLMAPI = function (prompt) {
 		})
 			.then(function (response) {
 				if (!response.ok) {
-					throw new Error('API request failed: ' + response.status);
+					// Get the error details from the response
+					return response
+						.json()
+						.then(function (errorData) {
+							console.error('OpenAI API Error:', {
+								status: response.status,
+								statusText: response.statusText,
+								error: errorData,
+							});
+							throw new Error(
+								'API request failed: ' +
+									response.status +
+									' - ' +
+									(errorData.error?.message ||
+										errorData.message ||
+										'Unknown error')
+							);
+						})
+						.catch(function (parseError) {
+							// If we can't parse the error response as JSON
+							console.error('OpenAI API Error:', {
+								status: response.status,
+								statusText: response.statusText,
+								parseError: parseError,
+							});
+							throw new Error(
+								'API request failed: ' +
+									response.status +
+									' - ' +
+									response.statusText
+							);
+						});
 				}
 				return response.json();
 			})
@@ -579,7 +527,38 @@ FrustrationToTasksApp.prototype.callLLMAPI = function (prompt) {
 		})
 			.then(function (response) {
 				if (!response.ok) {
-					throw new Error('API request failed: ' + response.status);
+					// Get the error details from the response
+					return response
+						.json()
+						.then(function (errorData) {
+							console.error('Anthropic API Error:', {
+								status: response.status,
+								statusText: response.statusText,
+								error: errorData,
+							});
+							throw new Error(
+								'API request failed: ' +
+									response.status +
+									' - ' +
+									(errorData.error?.message ||
+										errorData.message ||
+										'Unknown error')
+							);
+						})
+						.catch(function (parseError) {
+							// If we can't parse the error response as JSON
+							console.error('Anthropic API Error:', {
+								status: response.status,
+								statusText: response.statusText,
+								parseError: parseError,
+							});
+							throw new Error(
+								'API request failed: ' +
+									response.status +
+									' - ' +
+									response.statusText
+							);
+						});
 				}
 				return response.json();
 			})
@@ -637,25 +616,53 @@ FrustrationToTasksApp.prototype.updateTasksDisplay = function () {
 
 	var filteredTasks = this.tasks;
 
-	if (this.currentFilter === 'completed') {
-		filteredTasks = this.tasks.filter(function (task) {
+	// Get filter values
+	var statusFilter = document.getElementById('status-filter').value;
+	var priorityFilter = document.getElementById('priority-filter').value;
+	var recurrenceFilter = document.getElementById('recurrence-filter').value;
+
+	// Apply status filter
+	if (statusFilter === 'completed') {
+		filteredTasks = filteredTasks.filter(function (task) {
 			return task.completed;
 		});
-	} else if (this.currentFilter === 'pending') {
-		filteredTasks = this.tasks.filter(function (task) {
+	} else if (statusFilter === 'pending') {
+		filteredTasks = filteredTasks.filter(function (task) {
 			return !task.completed;
 		});
-	} else if (this.currentFilter === 'high') {
-		filteredTasks = this.tasks.filter(function (task) {
+	}
+
+	// Apply priority filter
+	if (priorityFilter === 'high') {
+		filteredTasks = filteredTasks.filter(function (task) {
 			return task.priority === 'high';
 		});
-	} else if (this.currentFilter === 'medium') {
-		filteredTasks = this.tasks.filter(function (task) {
+	} else if (priorityFilter === 'medium') {
+		filteredTasks = filteredTasks.filter(function (task) {
 			return task.priority === 'medium';
 		});
-	} else if (this.currentFilter === 'low') {
-		filteredTasks = this.tasks.filter(function (task) {
+	} else if (priorityFilter === 'low') {
+		filteredTasks = filteredTasks.filter(function (task) {
 			return task.priority === 'low';
+		});
+	}
+
+	// Apply recurrence filter
+	if (recurrenceFilter === 'daily') {
+		filteredTasks = filteredTasks.filter(function (task) {
+			return task.recurring === 'daily';
+		});
+	} else if (recurrenceFilter === 'weekly') {
+		filteredTasks = filteredTasks.filter(function (task) {
+			return task.recurring === 'weekly';
+		});
+	} else if (recurrenceFilter === 'monthly') {
+		filteredTasks = filteredTasks.filter(function (task) {
+			return task.recurring === 'monthly';
+		});
+	} else if (recurrenceFilter === 'non-recurring') {
+		filteredTasks = filteredTasks.filter(function (task) {
+			return !task.recurring || task.recurring === 'none';
 		});
 	}
 
@@ -672,23 +679,19 @@ FrustrationToTasksApp.prototype.updateTasksDisplay = function () {
 		var task = filteredTasks[i];
 		var recurringClass =
 			task.recurring && task.recurring !== 'none' ? ' recurring' : '';
+		var priorityClass = ' priority-' + task.priority;
 		var recurringIcon =
 			task.recurring && task.recurring !== 'none'
 				? '<span class="recurring-icon" title="Recurring ' +
 				  task.recurring +
 				  '">↻</span>'
 				: '';
-		var detailsButton =
-			task.description && task.description.trim()
-				? '<button class="details-toggle-btn" onclick="app.toggleDetails(' +
-				  task.id +
-				  ')" title="Show/Hide Details">ℹ️</button>'
-				: '';
 
 		html +=
 			'<div class="task-item ' +
 			(task.completed ? 'completed' : '') +
 			recurringClass +
+			priorityClass +
 			'" data-task-id="' +
 			task.id +
 			'">' +
@@ -699,33 +702,14 @@ FrustrationToTasksApp.prototype.updateTasksDisplay = function () {
 			task.id +
 			')"></div>' +
 			'<div class="task-title">' +
+			'<span class="task-title-text">' +
 			task.title +
+			'</span>' +
 			recurringIcon +
 			'</div>' +
-			detailsButton +
-			'</div>';
-
-		// Add details section with description
-		if (task.description && task.description.trim()) {
-			html +=
-				'<div class="task-details" id="details-' +
-				task.id +
-				'" style="display: none;">' +
-				'<div class="details-content">' +
-				task.description.replace(/\n/g, '<br>') +
-				'</div>' +
-				'</div>';
-		}
-
-		html +=
 			'<div class="task-metadata">' +
 			'<span class="task-category">' +
 			task.category +
-			'</span>' +
-			'<span class="task-priority ' +
-			task.priority +
-			'">' +
-			task.priority.toUpperCase() +
 			'</span>' +
 			(task.recurring && task.recurring !== 'none'
 				? '<span class="task-recurring">' +
@@ -734,48 +718,108 @@ FrustrationToTasksApp.prototype.updateTasksDisplay = function () {
 				: '') +
 			'</div>' +
 			'</div>';
+
+		// Add description if it exists
+		if (task.description && task.description.trim()) {
+			html +=
+				'<div class="task-description expandable">' +
+				task.description.replace(/\n/g, '<br>') +
+				'</div>';
+		}
+
+		// Add subtasks section
+		if (task.subtasks && task.subtasks.length > 0) {
+			html += '<div class="task-subtasks-section">';
+			html += '<div class="subtasks-header">Subtasks:</div>';
+			html += '<div class="subtasks-list">';
+			for (var s = 0; s < task.subtasks.length; s++) {
+				var subtask = task.subtasks[s];
+				html +=
+					'<div class="subtask-item">' +
+					'<div class="subtask-checkbox ' +
+					(subtask.completed ? 'checked' : '') +
+					'" onclick="app.toggleSubtask(' +
+					task.id +
+					', ' +
+					s +
+					')"></div>' +
+					'<span class="subtask-text ' +
+					(subtask.completed ? 'completed' : '') +
+					'">' +
+					subtask.text +
+					'</span>' +
+					'<button class="subtask-delete-btn" onclick="app.deleteSubtask(' +
+					task.id +
+					', ' +
+					s +
+					')">×</button>' +
+					'</div>';
+			}
+			html += '</div>';
+			html += '</div>';
+		}
+
+		// Add notes section
+		html += '<div class="task-notes-section">';
+		if (task.notes && task.notes.trim()) {
+			html +=
+				'<div class="task-notes">' +
+				'<strong>Notes:</strong> ' +
+				task.notes.replace(/\n/g, '<br>') +
+				'</div>';
+		}
+		html +=
+			'<div class="task-actions">' +
+			'<button class="task-action-btn" onclick="app.editTaskNotes(' +
+			task.id +
+			')">' +
+			(task.notes && task.notes.trim() ? 'Edit Notes' : 'Add Notes') +
+			'</button>' +
+			'<button class="task-action-btn" onclick="app.addSubtask(' +
+			task.id +
+			')">Add Subtask</button>' +
+			'</div>' +
+			'</div>';
+
+		html += '</div>';
 	}
 	tasksList.innerHTML = html;
 };
 
-FrustrationToTasksApp.prototype.toggleTask = function (taskId) {
-	for (var i = 0; i < this.tasks.length; i++) {
-		if (this.tasks[i].id === taskId) {
-			var task = this.tasks[i];
-			task.completed = !task.completed;
+FrustrationToTasksApp.prototype.toggleTask = async function (taskId) {
+	const task = this.tasks.find((t) => t.id === taskId);
+	if (!task) return;
 
-			if (task.completed) {
-				task.completedAt = new Date().toISOString();
+	const newCompletedState = !task.completed;
+	const updates = {
+		completed: newCompletedState,
+		completed_at: newCompletedState ? new Date().toISOString() : null,
+	};
 
-				// Handle recurring tasks
-				if (task.recurring && task.recurring !== 'none') {
-					var self = this;
-					// Reset the task after a short delay to show completion feedback
-					setTimeout(function () {
-						self.resetRecurringTask(taskId);
-					}, 2000);
-				}
-			} else {
-				task.completedAt = null;
-			}
-			break;
+	try {
+		const { error } = await this.supabase
+			.from('tasks')
+			.update(updates)
+			.eq('id', taskId);
+
+		if (error) throw error;
+
+		// Update local state
+		task.completed = newCompletedState;
+		task.completedAt = updates.completed_at;
+
+		// Handle recurring tasks
+		if (task.completed && task.recurring && task.recurring !== 'none') {
+			setTimeout(() => this.resetRecurringTask(taskId), 2000);
 		}
-	}
-	this.saveToStorage('tasks', this.tasks);
-	this.updateTasksDisplay();
-	this.updateStats();
-	this.updatePriorityBreakdown();
-	this.updateRecentCompletions();
-};
 
-FrustrationToTasksApp.prototype.toggleDetails = function (taskId) {
-	var detailsElement = document.getElementById('details-' + taskId);
-	if (detailsElement) {
-		if (detailsElement.style.display === 'none') {
-			detailsElement.style.display = 'block';
-		} else {
-			detailsElement.style.display = 'none';
-		}
+		this.updateTasksDisplay();
+		this.updateStats();
+		this.updatePriorityBreakdown();
+		this.updateRecentCompletions();
+	} catch (error) {
+		console.error('Error toggling task:', error);
+		this.showNotification('Error updating task status!');
 	}
 };
 
@@ -857,27 +901,37 @@ FrustrationToTasksApp.prototype.getTimeAgo = function (date) {
 	}
 };
 
-FrustrationToTasksApp.prototype.resetRecurringTask = function (taskId) {
-	for (var i = 0; i < this.tasks.length; i++) {
-		if (this.tasks[i].id === taskId) {
-			var task = this.tasks[i];
-			if (task.recurring && task.recurring !== 'none') {
-				task.completed = false;
-				task.completedAt = null;
-				task.nextDue = this.calculateNextDueDate(task.recurring);
+FrustrationToTasksApp.prototype.resetRecurringTask = async function (taskId) {
+	const task = this.tasks.find((t) => t.id === taskId);
+	if (!task || !task.recurring || task.recurring === 'none') return;
 
-				this.saveToStorage('tasks', this.tasks);
-				this.updateTasksDisplay();
-				this.updateStats();
-				this.updatePriorityBreakdown();
-				this.updateRecentCompletions();
+	const nextDue = this.calculateNextDueDate(task.recurring);
 
-				this.showNotification(
-					'Recurring task "' + task.title + '" has been reset'
-				);
-			}
-			break;
-		}
+	try {
+		const { error } = await this.supabase
+			.from('tasks')
+			.update({
+				completed: false,
+				completed_at: null,
+				next_due: nextDue,
+			})
+			.eq('id', taskId);
+
+		if (error) throw error;
+
+		// Update local state
+		task.completed = false;
+		task.completedAt = null;
+		task.nextDue = nextDue;
+
+		this.updateTasksDisplay();
+		this.updateStats();
+		this.updatePriorityBreakdown();
+		this.updateRecentCompletions();
+		this.showNotification('Recurring task "' + task.title + '" has been reset');
+	} catch (error) {
+		console.error('Error resetting recurring task:', error);
+		this.showNotification('Error resetting recurring task!');
 	}
 };
 
@@ -936,36 +990,35 @@ FrustrationToTasksApp.prototype.checkRecurringTasks = function () {
 	}
 };
 
-FrustrationToTasksApp.prototype.setFilter = function (filter) {
-	this.currentFilter = filter;
-
-	var filterBtns = document.querySelectorAll('.filter-btn');
-	for (var i = 0; i < filterBtns.length; i++) {
-		filterBtns[i].classList.remove('active');
-	}
-	document
-		.querySelector('[data-filter="' + filter + '"]')
-		.classList.add('active');
-
+FrustrationToTasksApp.prototype.applyFilters = function () {
 	this.updateTasksDisplay();
 };
 
-FrustrationToTasksApp.prototype.clearCompletedTasks = function () {
-	this.tasks = this.tasks.filter(function (task) {
-		return !task.completed;
-	});
-	this.saveToStorage('tasks', this.tasks);
-	this.updateTasksDisplay();
-	this.updateStats();
-	this.updatePriorityBreakdown();
-	this.updateRecentCompletions();
-	this.showNotification('Completed tasks cleared!');
+FrustrationToTasksApp.prototype.clearCompletedTasks = async function () {
+	try {
+		const { error } = await this.supabase
+			.from('tasks')
+			.delete()
+			.eq('completed', true);
+
+		if (error) throw error;
+
+		this.tasks = this.tasks.filter((task) => !task.completed);
+		this.updateTasksDisplay();
+		this.updateStats();
+		this.updatePriorityBreakdown();
+		this.updateRecentCompletions();
+		this.showNotification('Completed tasks cleared!');
+	} catch (error) {
+		console.error('Error clearing completed tasks:', error);
+		this.showNotification('Error clearing completed tasks!');
+	}
 };
 
 FrustrationToTasksApp.prototype.exportTasks = function () {
 	var data = {
 		tasks: this.tasks,
-		recentVents: this.recentVents,
+		allVents: this.allVents,
 		exportDate: new Date().toISOString(),
 	};
 
@@ -983,39 +1036,11 @@ FrustrationToTasksApp.prototype.exportTasks = function () {
 	this.showNotification('Tasks exported successfully!');
 };
 
-FrustrationToTasksApp.prototype.showRecentVents = function () {
-	var recentVentsList = document.getElementById('recent-vents-list');
-
-	if (this.recentVents.length === 0) {
-		recentVentsList.innerHTML =
-			'<p style="color: #adb5bd; text-align: center; padding: 20px;">No recent vents yet</p>';
-		return;
-	}
-
-	var html = '';
-	var ventsToShow = this.recentVents.slice(0, 5);
-	for (var i = 0; i < ventsToShow.length; i++) {
-		var vent = ventsToShow[i];
-		html +=
-			'<div class="recent-entry" onclick="app.loadVentToInput(\'' +
-			vent.id +
-			'\')">' +
-			'<div class="recent-entry-text">' +
-			vent.text +
-			'</div>' +
-			'<div class="recent-entry-date">' +
-			new Date(vent.date).toLocaleDateString() +
-			'</div>' +
-			'</div>';
-	}
-	recentVentsList.innerHTML = html;
-};
-
 FrustrationToTasksApp.prototype.loadVentToInput = function (ventId) {
-	for (var i = 0; i < this.recentVents.length; i++) {
-		if (this.recentVents[i].id == ventId) {
+	for (var i = 0; i < this.allVents.length; i++) {
+		if (this.allVents[i].id == ventId) {
 			document.getElementById('frustration-input').value =
-				this.recentVents[i].text;
+				this.allVents[i].text;
 			break;
 		}
 	}
@@ -1028,15 +1053,45 @@ FrustrationToTasksApp.prototype.showSettingsModal = function () {
 	// Load current settings
 	document.getElementById('api-key-input').value = this.apiKey;
 	document.getElementById('llm-provider-select').value = this.llmProvider;
-	document.getElementById('custom-prompt-input').value = this.customPrompt;
+
+	// Show custom prompt or default prompt in the textarea
+	var promptInput = document.getElementById('custom-prompt-input');
+	if (this.customPrompt) {
+		promptInput.value = this.customPrompt;
+	} else {
+		promptInput.value = this.getDefaultPrompt();
+	}
+	promptInput.placeholder = 'Enter your custom prompt here...';
 };
 
 FrustrationToTasksApp.prototype.hideSettingsModal = function () {
 	document.getElementById('settings-modal').classList.remove('active');
 };
 
+FrustrationToTasksApp.prototype.getDefaultPrompt = function () {
+	return `You are a helpful assistant that converts people's frustrations and complaints into actionable tasks. 
+
+Please analyze the following collection of frustrations/vents and convert them into a comprehensive set of specific, actionable tasks that could help address the underlying issues across ALL the frustrations.
+
+Look for patterns, common themes, and root causes across all the frustrations. Create tasks that address the root causes, but focus more on things that are immediately doable, not things that require too much planning or organization.
+
+If there are existing task notes provided, consider them when creating new tasks - they may provide additional context, progress updates, or insights that should influence the task recommendations.
+
+For each task, provide:
+- title: A clear, concise title (don't use initcaps for every word)
+- description: A longer, detailed description that explains what needs to be done, why it's important, and any helpful context, tips, or suggestions. This will be shown in a collapsible panel when the user wants more details.
+- category: One of these categories: Learning, Action, Problem Solving, Goals, Simplification, Organization, Communication, Planning, Research, or General
+- priority: low, medium, or high
+- recurring: Set to "none" for one-time tasks, or "daily", "weekly", or "monthly" for recurring tasks. Use recurring tasks for habits, maintenance, or regular check-ins that would help prevent similar frustrations.
+- subtasks: An optional array of subtasks to break down complex tasks into smaller steps. Each subtask should be a simple, actionable step.
+
+Frustrations:
+{text}`;
+};
+
 FrustrationToTasksApp.prototype.resetPrompt = function () {
-	document.getElementById('custom-prompt-input').value = '';
+	var promptInput = document.getElementById('custom-prompt-input');
+	promptInput.value = this.getDefaultPrompt();
 	this.showNotification('Prompt reset to default');
 };
 
@@ -1118,6 +1173,370 @@ FrustrationToTasksApp.prototype.saveToStorage = function (key, data) {
 FrustrationToTasksApp.prototype.loadFromStorage = function (key) {
 	var data = localStorage.getItem('frustrationTasks_' + key);
 	return data ? JSON.parse(data) : null;
+};
+
+FrustrationToTasksApp.prototype.updateAllVentsDisplay = function () {
+	var allVentsList = document.getElementById('all-vents-list');
+	var placeholder = document.getElementById('no-vents-placeholder');
+
+	if (this.allVents.length === 0) {
+		allVentsList.innerHTML = '';
+		placeholder.style.display = 'block';
+		return;
+	}
+
+	placeholder.style.display = 'none';
+
+	var html = '';
+	for (var i = 0; i < this.allVents.length; i++) {
+		var vent = this.allVents[i];
+		var formattedDate =
+			new Date(vent.date).toLocaleDateString() +
+			' ' +
+			new Date(vent.date).toLocaleTimeString([], {
+				hour: '2-digit',
+				minute: '2-digit',
+			});
+
+		html +=
+			'<div class="vent-item">' +
+			'<div class="vent-header">' +
+			'<div class="vent-date">' +
+			formattedDate +
+			'</div>' +
+			'</div>' +
+			'<div class="vent-text">' +
+			vent.text +
+			'</div>' +
+			'<div class="vent-actions">' +
+			'<button class="vent-action-btn" onclick="app.loadVentToInput(' +
+			vent.id +
+			')">Load to Input</button>' +
+			'<button class="vent-action-btn delete" onclick="app.deleteVent(' +
+			vent.id +
+			')">Delete</button>' +
+			'</div>' +
+			'</div>';
+	}
+	allVentsList.innerHTML = html;
+};
+
+FrustrationToTasksApp.prototype.deleteVent = async function (ventId) {
+	if (confirm('Are you sure you want to delete this vent?')) {
+		try {
+			const { error } = await this.supabase
+				.from('vents')
+				.delete()
+				.eq('id', ventId);
+
+			if (error) {
+				console.error('Error deleting vent from Supabase:', error);
+				this.showNotification('Error deleting vent!');
+				return;
+			}
+
+			this.allVents = this.allVents.filter(function (vent) {
+				return vent.id != ventId;
+			});
+			this.saveToStorage('allVents', this.allVents);
+			this.updateAllVentsDisplay();
+			this.showNotification('Vent deleted successfully!');
+		} catch (error) {
+			console.error('Error in deleteVent:', error);
+			this.showNotification('Error deleting vent!');
+		}
+	}
+};
+
+FrustrationToTasksApp.prototype.clearAllVents = async function () {
+	if (
+		confirm('Are you sure you want to clear all vents? This cannot be undone.')
+	) {
+		try {
+			const { error } = await this.supabase.from('vents').delete().neq('id', 0); // Delete all rows
+
+			if (error) {
+				console.error('Error clearing vents from Supabase:', error);
+				this.showNotification('Error clearing vents!');
+				return;
+			}
+
+			this.allVents = [];
+			this.saveToStorage('allVents', this.allVents);
+			this.updateAllVentsDisplay();
+			this.showNotification('All vents cleared!');
+		} catch (error) {
+			console.error('Error in clearAllVents:', error);
+			this.showNotification('Error clearing vents!');
+		}
+	}
+};
+
+FrustrationToTasksApp.prototype.exportVents = function () {
+	var data = {
+		vents: this.allVents,
+		exportDate: new Date().toISOString(),
+	};
+
+	var blob = new Blob([JSON.stringify(data, null, 2)], {
+		type: 'application/json',
+	});
+	var url = URL.createObjectURL(blob);
+	var a = document.createElement('a');
+	a.href = url;
+	a.download =
+		'frustration-vents-' + new Date().toISOString().split('T')[0] + '.json';
+	a.click();
+	URL.revokeObjectURL(url);
+
+	this.showNotification('Vents exported successfully!');
+};
+
+FrustrationToTasksApp.prototype.editTaskNotes = function (taskId) {
+	var task = null;
+	for (var i = 0; i < this.tasks.length; i++) {
+		if (this.tasks[i].id === taskId) {
+			task = this.tasks[i];
+			break;
+		}
+	}
+
+	if (!task) return;
+
+	// Store current task ID for saving
+	this.editingTaskId = taskId;
+
+	// Show modal and populate with existing notes
+	this.showTaskNotesModal();
+	document.getElementById('task-notes-input').value = task.notes || '';
+	document.getElementById('task-notes-title').textContent =
+		'Notes for: ' + task.title;
+};
+
+FrustrationToTasksApp.prototype.showTaskNotesModal = function () {
+	document.getElementById('task-notes-modal').classList.add('active');
+};
+
+FrustrationToTasksApp.prototype.hideTaskNotesModal = function () {
+	document.getElementById('task-notes-modal').classList.remove('active');
+	this.editingTaskId = null;
+};
+
+FrustrationToTasksApp.prototype.saveTaskNotes = async function () {
+	if (!this.editingTaskId) return;
+
+	const notes = document.getElementById('task-notes-input').value.trim();
+
+	try {
+		const { error } = await this.supabase
+			.from('tasks')
+			.update({ notes: notes })
+			.eq('id', this.editingTaskId);
+
+		if (error) throw error;
+
+		// Update local state
+		const task = this.tasks.find((t) => t.id === this.editingTaskId);
+		if (task) {
+			task.notes = notes;
+		}
+
+		this.updateTasksDisplay();
+		this.hideTaskNotesModal();
+		this.showNotification('Notes saved successfully!');
+	} catch (error) {
+		console.error('Error saving task notes:', error);
+		this.showNotification('Error saving notes!');
+	}
+};
+
+FrustrationToTasksApp.prototype.addSubtask = function (taskId) {
+	var subtaskText = prompt('Enter subtask:');
+	if (!subtaskText || !subtaskText.trim()) return;
+
+	for (var i = 0; i < this.tasks.length; i++) {
+		if (this.tasks[i].id === taskId) {
+			if (!this.tasks[i].subtasks) {
+				this.tasks[i].subtasks = [];
+			}
+			this.tasks[i].subtasks.push({
+				text: subtaskText.trim(),
+				completed: false,
+				id: Date.now() + Math.random(),
+			});
+			break;
+		}
+	}
+
+	this.saveToStorage('tasks', this.tasks);
+	this.updateTasksDisplay();
+	this.showNotification('Subtask added successfully!');
+};
+
+FrustrationToTasksApp.prototype.toggleSubtask = function (
+	taskId,
+	subtaskIndex
+) {
+	for (var i = 0; i < this.tasks.length; i++) {
+		if (this.tasks[i].id === taskId) {
+			if (this.tasks[i].subtasks && this.tasks[i].subtasks[subtaskIndex]) {
+				this.tasks[i].subtasks[subtaskIndex].completed =
+					!this.tasks[i].subtasks[subtaskIndex].completed;
+			}
+			break;
+		}
+	}
+
+	this.saveToStorage('tasks', this.tasks);
+	this.updateTasksDisplay();
+	this.updateStats();
+	this.updatePriorityBreakdown();
+	this.updateRecentCompletions();
+};
+
+FrustrationToTasksApp.prototype.deleteSubtask = function (
+	taskId,
+	subtaskIndex
+) {
+	if (!confirm('Are you sure you want to delete this subtask?')) return;
+
+	for (var i = 0; i < this.tasks.length; i++) {
+		if (this.tasks[i].id === taskId) {
+			if (this.tasks[i].subtasks && this.tasks[i].subtasks[subtaskIndex]) {
+				this.tasks[i].subtasks.splice(subtaskIndex, 1);
+			}
+			break;
+		}
+	}
+
+	this.saveToStorage('tasks', this.tasks);
+	this.updateTasksDisplay();
+	this.showNotification('Subtask deleted successfully!');
+};
+
+// Add new method to load vents from Supabase
+FrustrationToTasksApp.prototype.loadVentsFromSupabase = async function () {
+	try {
+		const { data, error } = await this.supabase
+			.from('vents')
+			.select('*')
+			.order('date', { ascending: false });
+
+		if (error) {
+			console.error('Error loading vents from Supabase:', error);
+			// Fallback to local storage if Supabase fails
+			return;
+		}
+
+		this.allVents = data;
+		// Update local storage as backup
+		this.saveToStorage('allVents', this.allVents);
+	} catch (error) {
+		console.error('Error in loadVentsFromSupabase:', error);
+	}
+};
+
+// Add new method to load tasks from Supabase
+FrustrationToTasksApp.prototype.loadTasksFromSupabase = async function () {
+	try {
+		const { data, error } = await this.supabase
+			.from('tasks')
+			.select('*')
+			.order('created_at', { ascending: false });
+
+		if (error) {
+			console.error('Error loading tasks from Supabase:', error);
+			return;
+		}
+
+		this.tasks = data;
+		// Update local storage as backup
+		this.saveToStorage('tasks', this.tasks);
+	} catch (error) {
+		console.error('Error in loadTasksFromSupabase:', error);
+	}
+};
+
+// Add new function to generate tasks from vents
+FrustrationToTasksApp.prototype.generateTasksFromVents = async function () {
+	if (!this.apiKey) {
+		this.showNotification('Please configure your API key in settings first!');
+		this.showSettingsModal();
+		return;
+	}
+
+	this.showProcessingModal();
+
+	var allVentsText = this.allVents.map((vent) => vent.text);
+
+	if (allVentsText.length === 0) {
+		this.hideProcessingModal();
+		this.showNotification('No vents found to process');
+		return;
+	}
+
+	try {
+		const newTasks = await this.extractTasksFromAllFrustrations(allVentsText);
+
+		// Prepare tasks for Supabase insertion
+		const tasksToInsert = newTasks.map((task) => ({
+			title: task.title,
+			description: task.description,
+			category: task.category,
+			priority: task.priority,
+			recurring: task.recurring || 'none',
+			completed: false,
+			created_at: new Date().toISOString(),
+			subtasks: task.subtasks || [],
+		}));
+
+		// Insert tasks into Supabase
+		const { data: insertedTasks, error: taskError } = await this.supabase
+			.from('tasks')
+			.insert(tasksToInsert)
+			.select();
+
+		if (taskError)
+			throw new Error('Error inserting tasks: ' + taskError.message);
+
+		// Update local tasks array with Supabase data
+		this.tasks = insertedTasks;
+
+		// Update processed status for vents in Supabase
+		const { error: ventError } = await this.supabase
+			.from('vents')
+			.update({ processed: true })
+			.in(
+				'id',
+				this.allVents.map((v) => v.id)
+			);
+
+		if (ventError)
+			throw new Error('Error updating vent status: ' + ventError.message);
+
+		// Update local vents array
+		this.allVents.forEach((vent) => {
+			vent.processed = true;
+		});
+
+		// Update local storage as backup
+		this.saveToStorage('tasks', this.tasks);
+		this.saveToStorage('allVents', this.allVents);
+
+		this.hideProcessingModal();
+		this.updateTasksDisplay();
+		this.showNotification(
+			'Generated ' +
+				newTasks.length +
+				' actionable tasks from ' +
+				allVentsText.length +
+				' frustrations!'
+		);
+	} catch (error) {
+		console.error('Error generating tasks:', error);
+		this.hideProcessingModal();
+		this.showNotification('Error generating tasks: ' + error.message);
+	}
 };
 
 // Initialize the app

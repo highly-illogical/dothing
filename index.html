@@ -23,6 +23,8 @@
 		<link rel="apple-touch-icon" href="icon-192.png" />
 		<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
 		<link rel="icon" type="image/png" sizes="512x512" href="icon-512.png" />
+
+		<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 	</head>
 	<body>
 		<div class="app-container">
@@ -30,6 +32,7 @@
 			<div class="app-header">
 				<div class="mode-toggle">
 					<button id="vent-mode-btn" class="mode-btn active">Vent Mode</button>
+					<button id="vents-mode-btn" class="mode-btn">All Vents</button>
 					<button id="task-mode-btn" class="mode-btn">Task List</button>
 					<button id="progress-mode-btn" class="mode-btn">Progress</button>
 				</div>
@@ -54,16 +57,33 @@
 					></textarea>
 
 					<div class="input-actions">
-						<button id="process-btn" class="primary-btn">
-							Convert All Vents to Tasks
-						</button>
+						<button id="process-btn" class="primary-btn">Save Vent</button>
 						<button id="clear-btn" class="secondary-btn">Clear</button>
 					</div>
 				</div>
+			</div>
 
-				<div class="recent-entries">
-					<h3>Recent Entries</h3>
-					<div id="recent-vents-list"></div>
+			<!-- All Vents Mode Interface -->
+			<div id="vents-mode" class="mode-interface">
+				<div class="mode-header">
+					<h1>All Your Vents</h1>
+					<p>View and manage all your recorded frustrations and thoughts.</p>
+				</div>
+
+				<div class="vents-section">
+					<div id="all-vents-list"></div>
+					<div id="no-vents-placeholder" class="placeholder">
+						<p>No vents recorded yet. Switch to Vent Mode to get started.</p>
+					</div>
+				</div>
+
+				<div class="action-buttons">
+					<button id="clear-all-vents-btn" class="secondary-btn">
+						Clear All Vents
+					</button>
+					<button id="export-vents-btn" class="secondary-btn">
+						Export Vents
+					</button>
 				</div>
 			</div>
 
@@ -72,18 +92,41 @@
 				<div class="mode-header">
 					<h1>Your Tasks</h1>
 					<p>Tasks generated from your frustrations, ready to tackle.</p>
+					<button id="generate-tasks-btn" class="primary-btn">
+						Generate Tasks from Vents
+					</button>
 				</div>
 
 				<div class="task-filters">
-					<button class="filter-btn active" data-filter="all">All</button>
-					<button class="filter-btn" data-filter="pending">Pending</button>
-					<button class="filter-btn" data-filter="completed">Completed</button>
-					<div class="filter-divider"></div>
-					<button class="filter-btn" data-filter="high">High Priority</button>
-					<button class="filter-btn" data-filter="medium">
-						Medium Priority
-					</button>
-					<button class="filter-btn" data-filter="low">Low Priority</button>
+					<div class="filter-group">
+						<label>Status:</label>
+						<select id="status-filter" class="filter-select">
+							<option value="all">All Tasks</option>
+							<option value="pending">Pending</option>
+							<option value="completed">Completed</option>
+						</select>
+					</div>
+
+					<div class="filter-group">
+						<label>Priority:</label>
+						<select id="priority-filter" class="filter-select">
+							<option value="all-priority">All Priorities</option>
+							<option value="high">High Priority</option>
+							<option value="medium">Medium Priority</option>
+							<option value="low">Low Priority</option>
+						</select>
+					</div>
+
+					<div class="filter-group">
+						<label>Recurrence:</label>
+						<select id="recurrence-filter" class="filter-select">
+							<option value="all-recurring">All Types</option>
+							<option value="daily">Daily</option>
+							<option value="weekly">Weekly</option>
+							<option value="monthly">Monthly</option>
+							<option value="non-recurring">One-time</option>
+						</select>
+					</div>
 				</div>
 
 				<div class="tasks-section">
@@ -176,14 +219,48 @@
 			</div>
 		</div>
 
+		<!-- Task Notes Modal -->
+		<div id="task-notes-modal" class="modal">
+			<div class="modal-content settings-modal-content">
+				<div class="modal-header">
+					<h2 id="task-notes-title">Task Notes</h2>
+					<button id="close-task-notes-btn" class="close-btn">×</button>
+				</div>
+
+				<div class="modal-body settings-modal-body">
+					<div class="form-group">
+						<label for="task-notes-input">Notes:</label>
+						<textarea
+							id="task-notes-input"
+							placeholder="Add your thoughts, progress updates, or any additional context for this task..."
+							rows="6"
+						></textarea>
+						<small class="form-help">
+							These notes will be included when regenerating your task list to
+							help provide better context.
+						</small>
+					</div>
+				</div>
+
+				<div class="modal-footer">
+					<button id="save-task-notes-btn" class="primary-btn">
+						Save Notes
+					</button>
+					<button id="cancel-task-notes-btn" class="secondary-btn">
+						Cancel
+					</button>
+				</div>
+			</div>
+		</div>
+
 		<!-- Settings Modal -->
 		<div id="settings-modal" class="modal">
-			<div class="modal-content">
+			<div class="modal-content settings-modal-content">
 				<div class="modal-header">
 					<h2>Settings</h2>
 					<button id="close-settings-btn" class="close-btn">&times;</button>
 				</div>
-				<div class="modal-body">
+				<div class="modal-body settings-modal-body">
 					<div class="form-group">
 						<label for="llm-provider-select">LLM Provider:</label>
 						<select id="llm-provider-select">
@@ -266,6 +343,7 @@
 			</div>
 		</div>
 
+		<script src="config.js"></script>
 		<script src="script.js"></script>
 
 		<!-- PWA Service Worker Registration -->
